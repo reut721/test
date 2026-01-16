@@ -55,7 +55,6 @@ class Player:
                 self._column += 1
 
     def space(self) -> None:
-        # ייבוא מקומי כדי למנוע circular import
         import Bomb
 
         if len(self._active_bombs) >= self._max_bombs:
@@ -76,8 +75,8 @@ class Bot(Player):
         super().__init__(row, column, icon, grid_list)
         self._running = True
         self._other_players = other_players if other_players else []
-        self._max_bombs = 1
         self._last_bomb_time = 0
+        self._position_history = deque(maxlen=4)  # זכור 4 מיקומים אחרונים
 
     def stop(self):
         self._running = False
@@ -119,11 +118,14 @@ class Bot(Player):
 
     def _get_potential_blast_zone(self, c: int, r: int) -> set:
         """מחזיר את אזור הפיצוץ הפוטנציאלי אם נניח פצצה במיקום (c, r)"""
+        import Bomb
         blast_zone = {(c, r)}
+        temp_bomb = Bomb.Bomb()
+        power = temp_bomb._power  # גישה לטווח הפצצה
 
         # בדוק בכל 4 הכיוונים
         for dc, dr in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-            for i in range(1, 3):  # טווח פצצה = 2
+            for i in range(1, power + 1):
                 nc, nr = c + (dc * i), r + (dr * i)
                 if 0 <= nc < 13 and 0 <= nr < 15:
                     blast_zone.add((nc, nr))
@@ -152,6 +154,11 @@ class Bot(Player):
         parent = {bomb_pos: None}
 
         while queue:
+            # חשב את אזור הסכנה העתידי (כולל הפצצה החדשה)
+            future_danger = self.get_danger_zones()
+            potential_blast = self._get_potential_blast_zone(bomb_pos[0], bomb_pos[1])
+            future_danger.update(potential_blast)
+
             curr = queue.popleft()
 
             # מצאנו מקום בטוח מחוץ לאזור הפיצוץ!
@@ -202,9 +209,9 @@ class Bot(Player):
         queue = deque([start])
         visited = {start}
         parent = {start: None}
-        danger = self.get_danger_zones()
 
         while queue:
+            danger = self.get_danger_zones()
             curr = queue.popleft()
 
             # אם מצאנו מקום בטוח - החזר את הצעד הראשון לשם
@@ -233,11 +240,14 @@ class Bot(Player):
 
     def _evaluate_position(self, c: int, r: int) -> int:
         """מעריך כמה טוב מיקום להנחת פצצה"""
+        import Bomb
         score = 0
+        temp_bomb = Bomb.Bomb()
+        power = temp_bomb._power
 
         # בדוק בכל 4 הכיוונים
         for dc, dr in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-            for i in range(1, 3):  # טווח הפצצה
+            for i in range(1, power + 1):
                 nc, nr = c + (dc * i), r + (dr * i)
 
                 if 0 <= nc < 13 and 0 <= nr < 15:
@@ -257,19 +267,17 @@ class Bot(Player):
         return score
 
     def _find_target(self) -> tuple | None:
-        """מוצא מטרה טובה להנחת פצצה - רק אם יש מסלול בריחה!"""
+        """מוצא מטרה טובה להנחת פצצה"""
         best_target = None
-        best_score = 0
-        danger = self.get_danger_zones()
+        best_score = -999  # ✅ שינוי: מתחיל ממינוס כדי לקבל כל ציון!
 
-        # חפש במרחק של עד 6 צעדים
-        for dc in range(-6, 7):
-            for dr in range(-6, 7):
-                c = self._column + dc
-                r = self._row + dr
 
-                # בדוק שהמיקום חוקי
-                if not (0 <= c < 13 and 0 <= r < 15):
+        # חפש בכל המפה
+        for c in range(13):
+            for r in range(15):
+                danger = self.get_danger_zones()
+                # דלג על המיקום הנוכחי
+                if (c, r) == (self._column, self._row):
                     continue
 
                 # בדוק שזה לא אזור סכנה נוכחי
@@ -284,23 +292,59 @@ class Bot(Player):
                 # חשב ציון למיקום הזה
                 score = self._evaluate_position(c, r)
 
-                # רק אם יש משהו שווה לפוצץ
-                if score >= 15:
-                    # הכי חשוב: בדוק שיש מסלול בריחה!
+                # חשב מרחק מהבוט
+                distance = abs(c - self._column) + abs(r - self._row)
+
+                # העדף מקומות קרובים עם ציון גבוה
+                # קנס קטן על מרחק כדי להעדיף מקומות קרובים
+                final_score = score - (distance * 0.5)
+
+                if final_score > best_score:
+                    # בדוק שיש מסלול בריחה
                     has_escape, _ = self._has_escape_route((c, r))
                     if has_escape:
-                        # העדף מקומות קרובים יותר
-                        distance = abs(dc) + abs(dr)
-                        final_score = score - distance
-
-                        if final_score > best_score:
-                            best_score = final_score
-                            best_target = (c, r)
+                        best_score = final_score
+                        best_target = (c, r)
 
         return best_target
 
+    def _find_path_to_target(self, target: tuple) -> tuple | None:
+        """מוצא את הצעד הבא במסלול הקצר ביותר למטרה באמצעות BFS"""
+        if not target:
+            return None
+
+        start = (self._column, self._row)
+        if start == target:
+            return None
+
+        queue = deque([(start, [start])])
+        visited = {start}
+
+        while queue:
+            danger = self.get_danger_zones()
+
+            curr, path = queue.popleft()
+
+            # הגענו למטרה!
+            if curr == target:
+                # החזר את הצעד הבא במסלול
+                return path[1] if len(path) > 1 else None
+
+            # חפש שכנים
+            for neighbor in self._who_is_around(curr[0], curr[1]):
+                if neighbor not in visited:
+                    nc, nr = neighbor
+                    sqr = self._grid_list[nc][nr]
+
+                    # ✅ תיקון: מותר לעבור דרך ריבועים ריקים או פיצוצים, אבל לא דרך סכנה
+                    if (not sqr.get_is_object() or sqr.get_is_poisoned()) and neighbor not in danger:
+                        visited.add(neighbor)
+                        queue.append((neighbor, path + [neighbor]))
+
+        return None  # אין מסלול
+
     def _move_towards(self, target: tuple) -> bool:
-        """מנסה לזוז לכיוון המטרה"""
+        """מנסה לזוז לכיוון המטרה - עם מניעת לופים"""
         if not target:
             return False
 
@@ -339,9 +383,22 @@ class Bot(Player):
             elif dc > 0 and curr_c < 12:
                 moves.append((curr_c + 1, curr_r))
 
-        # נסה כל מהלך
+        # נסה כל מהלך, אבל דלג על מיקומים שכבר ביקרנו לאחרונה
+        for new_c, new_r in moves:
+            # בדוק שזה לא מיקום שהיינו בו לאחרונה
+            if (new_c, new_r) in self._position_history:
+                continue
+
+            if self._is_safe_spot((new_c, new_r)):
+                self._position_history.append((self._column, self._row))
+                self._column, self._row = new_c, new_r
+                return True
+
+        # אם כל האפשרויות כבר נבדקו, נקה את ההיסטוריה ונסה שוב
         for new_c, new_r in moves:
             if self._is_safe_spot((new_c, new_r)):
+                self._position_history.clear()
+                self._position_history.append((self._column, self._row))
                 self._column, self._row = new_c, new_r
                 return True
 
@@ -349,7 +406,6 @@ class Bot(Player):
 
     def bot_algorithm(self):
         """הלוגיקה הראשית של הבוט - חכמה יותר!"""
-
         while self._running:
             try:
                 if not self._is_alive:
@@ -379,7 +435,7 @@ class Bot(Player):
                 # 2. בדוק אם כדאי להניח פצצה כאן (רק אם יש מסלול בריחה!)
                 current_time = time.time()
                 if (len(self._active_bombs) < self._max_bombs and
-                        current_time - self._last_bomb_time > 2.5):
+                        current_time - self._last_bomb_time > 0.3):
 
                     score = self._evaluate_position(self._column, self._row)
 
@@ -393,30 +449,36 @@ class Bot(Player):
 
                             # ברח מיד אחרי הנחת הפצצה
                             time.sleep(0.05)
-                            if escape_target:
-                                # נע לכיוון המקום הבטוח
-                                safe_move = self._find_safe_path(curr_pos)
-                                if safe_move:
-                                    self._column, self._row = safe_move
+                            safe_move = self._find_safe_path(curr_pos)
+                            if safe_move:
+                                self._column, self._row = safe_move
                             continue
 
                 # 3. חפש מטרה ולך לשם
                 target = self._find_target()
                 if target:
-                    moved = self._move_towards(target)
-                    if not moved:
-                        # לא הצלחנו לזוז למטרה - תנועה אקראית בטוחה
-                        neighbors = self._who_is_around(self._column, self._row)
-                        safe_neighbors = [n for n in neighbors if self._is_safe_spot(n)]
-                        if safe_neighbors:
-                            self._column, self._row = random.choice(safe_neighbors)
-                else:
-                    # אין מטרה ספציפית - סתם תסתובב
-                    neighbors = self._who_is_around(self._column, self._row)
-                    safe_neighbors = [n for n in neighbors if self._is_safe_spot(n)]
-                    if safe_neighbors:
-                        self._column, self._row = random.choice(safe_neighbors)
+                    # 🌟 נסה קודם BFS מדויק למציאת מסלול
+                    next_step = self._find_path_to_target(target)
+                    if next_step:
+                        self._position_history.append((self._column, self._row))
+                        self._column, self._row = next_step
+                    else:
+                        # אין מסלול BFS - נסה heuristic
+                        moved = self._move_towards(target)
+                        if not moved:
+                            # לא הצלחנו לזוז למטרה - תנועה אקראית בטוחה
+                            neighbors = self._who_is_around(self._column, self._row)
+                            safe_neighbors = [n for n in neighbors if self._is_safe_spot(n)]
+                            if safe_neighbors:
+                                self._column, self._row = random.choice(safe_neighbors)
+                # else:
+                #     # אין מטרה ספציפית - סתם תסתובב
+                #     neighbors = self._who_is_around(self._column, self._row)
+                #     safe_neighbors = [n for n in neighbors if self._is_safe_spot(n)]
+                #     if safe_neighbors:
+                #         self._column, self._row = random.choice(safe_neighbors)
 
             except Exception as e:
+                print(f"ERROR in Bot Algorithm: {e}")
                 import traceback
                 traceback.print_exc()

@@ -174,6 +174,9 @@ def server_socket():
 def multiplayer_game(lst: list) -> None:
     screen = pygame.display.get_surface()
     server = server_socket()
+    lst = creating_grid_list()
+    obstacles_on_screen(lst)
+
 
 
 def check_game_over(p1, bot_lst) -> tuple[bool, str]:
@@ -322,4 +325,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()  
+    main()

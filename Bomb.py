@@ -9,6 +9,17 @@ RECT_WIDTH = 50
 BLACK = (0, 0, 0)
 
 
+import pygame
+import time
+import Grid
+
+SLEEP_TIME = 1.5
+RECT_FRAME_WIDTH = 3
+RECT_HEIGHT = 50
+RECT_WIDTH = 50
+BLACK = (0, 0, 0)
+
+
 class Bomb:
 
     _cached_icon = None
@@ -41,6 +52,9 @@ class Bomb:
     def get_row(self) -> int:
         return self._row
 
+    def get_power(self) -> int:
+        return self._power
+
     def stop(self):
         """Signals the bomb to stop immediately."""
         self._running = False
@@ -48,7 +62,7 @@ class Bomb:
     def explosion_list(self) -> list:
         explode = [(self._column, self._row)]
         hit_a_wall = [False for _ in range(4)]
-        for i in range(1, self._power + 2):
+        for i in range(1, self._power + 1):
 
             if self._column > 0 and self._column >= i and not hit_a_wall[0]:
                 if not self._grid_list[self._column - i][self._row].get_is_blowable():
@@ -120,10 +134,8 @@ class Bomb:
         time.sleep(SLEEP_TIME)
         explode = self.explosion_list()
         self.__explosion(explode)
-        if self in self._active_bombs_list:
-            self._active_bombs_list.remove(self)
         time.sleep(SLEEP_TIME - 1)
         self.__end_of_explosion(explode)
-
-
+        if self in self._active_bombs_list:
+            self._active_bombs_list.remove(self)
         return None
