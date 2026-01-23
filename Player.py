@@ -76,7 +76,7 @@ class Bot(Player):
         self._running = True
         self._other_players = other_players if other_players else []
         self._last_bomb_time = 0
-        self._position_history = deque(maxlen=4)  # זכור 4 מיקומים אחרונים
+        self._position_history = deque(maxlen=5)  # זכור 4 מיקומים אחרונים
 
     def stop(self):
         self._running = False
@@ -144,9 +144,9 @@ class Bot(Player):
         מחזיר: (יש מסלול בריחה?, המקום הבטוח הקרוב ביותר)
         """
         # חשב את אזור הסכנה העתידי (כולל הפצצה החדשה)
-        future_danger = self.get_danger_zones()
-        potential_blast = self._get_potential_blast_zone(bomb_pos[0], bomb_pos[1])
-        future_danger.update(potential_blast)
+        # future_danger = self.get_danger_zones()
+        # potential_blast = self._get_potential_blast_zone(bomb_pos[0], bomb_pos[1])
+        # future_danger.update(potential_blast)
 
         # BFS למציאת מקום בטוח
         queue = deque([bomb_pos])
@@ -154,7 +154,6 @@ class Bot(Player):
         parent = {bomb_pos: None}
 
         while queue:
-            # חשב את אזור הסכנה העתידי (כולל הפצצה החדשה)
             future_danger = self.get_danger_zones()
             potential_blast = self._get_potential_blast_zone(bomb_pos[0], bomb_pos[1])
             future_danger.update(potential_blast)
@@ -270,7 +269,7 @@ class Bot(Player):
         """מוצא מטרה טובה להנחת פצצה"""
         best_target = None
         best_score = -999  # ✅ שינוי: מתחיל ממינוס כדי לקבל כל ציון!
-
+        # danger = self.get_danger_zones()
 
         # חפש בכל המפה
         for c in range(13):
@@ -447,11 +446,19 @@ class Bot(Player):
                             self.space()
                             self._last_bomb_time = current_time
 
-                            # ברח מיד אחרי הנחת הפצצה
-                            time.sleep(0.05)
-                            safe_move = self._find_safe_path(curr_pos)
-                            if safe_move:
-                                self._column, self._row = safe_move
+                            for i in range(4):  # נסה עד 4 צעדים
+                                curr_danger = self.get_danger_zones()  # חשב מחדש!
+                                curr_pos = (self._column, self._row)
+
+                                if curr_pos in curr_danger:
+                                    safe_move = self._find_safe_path(curr_pos)
+                                    if safe_move:
+                                        self._column, self._row = safe_move
+                                        time.sleep(0.1)
+                                    else:
+                                        break  # אין לאן לברוח
+                                else:
+                                    break  # הגענו למקום בטוח
                             continue
 
                 # 3. חפש מטרה ולך לשם
